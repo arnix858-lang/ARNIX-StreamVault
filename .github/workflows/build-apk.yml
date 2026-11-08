@@ -16,6 +16,9 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -26,11 +29,28 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Locate preinstalled Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Android SDK command-line tools were not found on this runner."
+            find "$ANDROID_HOME" -maxdepth 3 -type d | head -n 80
+            exit 1
+          fi
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-      - name: Accept Android SDK licenses
-        run: yes | sdkmanager --licenses || true
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -39,6 +59,7 @@ jobs:
         run: ./gradlew --no-daemon --stacktrace :app:assembleDebug
 
       - name: Prepare APK
+        shell: bash
         run: |
           mkdir -p release
           APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -type f | head -n 1)"
